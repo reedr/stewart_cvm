@@ -2,22 +2,29 @@
 
 import asyncio
 import logging
+from operator import itemgetter
 import re
+import time
 
 from homeassistant.core import HomeAssistant, callback
 
-from .const import CVM_CONNECT_TIMEOUT, CVM_LOGIN_TIMEOUT, CVM_PORT
+from .const import (
+    CVM_CONNECT_TIMEOUT,
+    CVM_LOGIN_TIMEOUT,
+    CVM_MIN_COMMAND_INTERVAL,
+    CVM_PORT,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
-MIN_COVER_POSITION = 0
-MAX_COVER_POSITION = 100
+MIN_COVER_POSITION = 0 # narrowest
+MAX_COVER_POSITION = 100 # widest
 
 class CVMDevice:
     """Represents a single CVM device."""
 
     def __init__(
-        self, hass: HomeAssistant, host: str, username: str, password: str, presets: str, maxpos: str
+        self, hass: HomeAssistant, host: str, username: str, password: str, presets_aspect: str, presets_position: str
     ) -> None:
         """Set up class."""
 
@@ -25,10 +32,16 @@ class CVMDevice:
         self._host = host
         self._username = username
         self._password = password
-        self._presets = [float(ar) for ar in presets.split(",")]
-        self._min_aspect = min(self._presets)
-        self._max_aspect = max(self._presets)
-        self._max_raw_position = float(maxpos)
+        motor_positions = [float(p) for p in presets_position.split(",")]
+        max_motor_position = max(motor_positions)
+        self._aspect_ratios = sorted([{"name": ar,
+                                       "value": float(ar),
+                                       "preset": i+1,
+                                       "motor_position": motor_positions[i],
+                                       "cover_position": int((max_motor_position - motor_positions[i])
+                                                              * MAX_COVER_POSITION / max_motor_position)}
+                                     for i, ar in enumerate(presets_aspect.split(","))],
+                                     key=itemgetter("value"))
         self._device_id = f"CVM:{host}"
         self._reader: asyncio.StreamReader
         self._writer: asyncio.StreamWriter
@@ -36,11 +49,21 @@ class CVMDevice:
         self._callback = None
         pat = r'[^!#]*([!#])1\.1\.(\d)\.MOTOR(\.[^=]+)?=([?.0-9A-Z]+)'
         self._match_re = re.compile(pat.encode('ascii'))
-        self._data = {"position": None, "motor_status": "STOP", "motor_position": None, "aspect_ratio": None, "screen_preset": None,
-                      "preset_aspects": presets, "preset_positions": [self.aspect_to_position(ar) for ar in self._presets]}
+        self._data = {
+                        "position": None,
+                        "motor_status": "STOP",
+                        "motor_position": None,
+                        "aspect_ratios": self._aspect_ratios,
+                        "screen_aspect_ratio": None,
+                        "screen_aspect_ratio_string": None,
+                        "screen_preset": None
+                      }
         self._init_event = asyncio.Event()
+        self._command_block_event = asyncio.Event()
+        self._command_block_event.set()
+        self._last_command_sent = None
+        self._is_moving = False
         self._listener = None
-        _LOGGER.debug("setup: host=%s presets=%s maxpos=%.2f", self._host, self._presets, self._max_raw_position)
 
     @property
     def device_id(self) -> str:
@@ -57,44 +80,40 @@ class CVMDevice:
         """Dev data."""
         return self._data
 
-    def position_to_aspect(self, position: int) -> float:
-        """Convert cover position to aspect ratio."""
-        aspect: float
-        if position == 0:
-            aspect = self._min_aspect
-        elif position == 100:
-            aspect = self._max_aspect
-        else:
-            aspect = ((float(position) / MAX_COVER_POSITION) * (self._max_aspect - self._min_aspect)) + self._min_aspect
-        return aspect
+    @property
+    def aspect_ratios(self) -> list[str]:
+        """Strings for aspect ratios."""
+        return [ar["name"] for ar in self._aspect_ratios]
 
-    def aspect_to_position(self, aspect: float) -> int:
-        """Convert aspect ratio to cover position."""
-        x1 = aspect - self._min_aspect
-        x2 = x1 / (self._max_aspect - self._min_aspect)
-        x3 = max(min(int(x2 * MAX_COVER_POSITION), 100), 0)
-        return x3  # noqa: RET504
+    def cover_position_to_aspect(self, position: int) -> dict:
+        """Find aspect just larger than position."""
+        if position <= MIN_COVER_POSITION:
+            return self._aspect_ratios[0]
+        if position >= MAX_COVER_POSITION:
+            return self._aspect_ratios[-1]
+        for ar in self._aspect_ratios:
+            if position <= ar["cover_position"]:
+                return ar
+        return self._aspect_ratios[-1]
 
-    def raw_position_to_position(self, raw_position: float) -> int:
-        """Convert raw motor position to cover position."""
-        x1 = raw_position / self._max_raw_position
-        x2 = x1 * MAX_COVER_POSITION
-        x3 = min(int(x2), MAX_COVER_POSITION)
-        x4 = MAX_COVER_POSITION - x3
-        # _LOGGER.debug("%.2f %.2f %d %d", x1, x2, x3, x4)
-        return x4  # noqa: RET504
+    def motor_position_to_aspect(self, position: float) -> dict:
+        """Find aspect just larger than position."""
+        close_i = 0
+        close_diff = 100
+        for i, ar in enumerate(self._aspect_ratios):
+            diff = abs(position - ar["motor_position"])
+            if diff < close_diff:
+                close_diff = diff
+                close_i = i
+        return self._aspect_ratios[close_i]
 
-    def position_lookup(self, position: int) -> tuple[float, int]:
-        """Return the narrowest preset that fits."""
-        aspect = self.position_to_aspect(position)
-        low_aspect = 1000.0
-        low_preset = 0
-        for i, pa in enumerate(self._presets):
-            # _LOGGER.debug("%.2f ?< %.2f ?< %.2f", aspect, pa, low_aspect)
-            if aspect <= pa < low_aspect:
-                low_aspect = self._presets[i]
-                low_preset = i+1
-        return (low_aspect, low_preset)
+    def aspect_ratio_lookup(self, aspect: str) -> dict:
+        """Lookup the aspect."""
+        for ar in self._aspect_ratios:
+            if ar["name"] == aspect:
+                return ar
+        return None
+
 
     async def open_connection(self, test: bool=False) -> bool:
         """Establish a connection."""
@@ -127,7 +146,7 @@ class CVMDevice:
                 self._online = True
                 self._listener = asyncio.create_task(self.listener())
 
-        except (TimeoutError, OSError) as err:
+        except (TimeoutError, OSError, asyncio.IncompleteReadError) as err:
             self._online = False
             _LOGGER.error("Connect sequence error %s", err)
             raise ConnectionError("Connect sequence error") from err
@@ -138,27 +157,47 @@ class CVMDevice:
         """Test a connect."""
         return await self.open_connection(test=True)
 
+    async def maybe_delay_command(self, wait: bool = True) -> None:
+        """Wait if it's been too soon."""
+        if self._last_command_sent is not None:
+            dt = time.time() - self._last_command_sent
+            if dt < CVM_MIN_COMMAND_INTERVAL:
+                if wait:
+                    await asyncio.sleep(CVM_MIN_COMMAND_INTERVAL - dt)
+                else:
+                    return False
+        return True
+
     async def send_command(self, command: str) -> bool:
         """Make an API call."""
         if await self.open_connection():
             cmd = command.encode('ascii') + b"\r\n"
             _LOGGER.debug("-> %s", str(cmd))
             self._writer.write(cmd)
+            self._last_command_sent = time.time()
             return True
         return False
 
     async def send_query_position(self) -> bool:
         """Query."""
-        return await self.send_command("#1.1.1.MOTOR.POSITION=?")
+        if await self.maybe_delay_command(wait=False):
+            return await self.send_command("#1.1.1.MOTOR.POSITION=?")
+        return False
 
     async def send_recall(self, preset: int) -> bool:
         """Recall a preset."""
+        await self.maybe_delay_command()
         return await self.send_command(f"#1.1.0.MOTOR=RECALL,{preset};")
+
+    async def set_aspect_ratio(self, aspect: str) -> bool:
+        """Set mask from aspect ratio."""
+        ar = self.aspect_ratio_lookup(aspect)
+        return await self.send_recall(ar["preset"])
 
     async def set_position(self, position: int) -> bool:
         """Setit."""
-        (aspect, preset) = self.position_lookup(position)
-        return await self.send_recall(preset)
+        ar = self.cover_position_to_aspect(position)
+        return await self.send_recall(ar["preset"])
 
     async def open_mask(self) -> bool:
         """Open wide."""
@@ -166,7 +205,7 @@ class CVMDevice:
 
     async def close_mask(self) -> bool:
         """Narrow bridge."""
-        return await self.send_recall(self.get_preset(0))
+        return await self.set_position(0)
 
     async def stop_mask(self) -> bool:
         """Stop moving."""
@@ -187,33 +226,43 @@ class CVMDevice:
 
         while True:
             try:
-                line = await self._reader.readuntil(b"\r")
+                line = await self._reader.readuntil(b"\n")
+
                 _LOGGER.debug("<- %s", str(line))
 
                 match = self._match_re.match(line)
-#                _LOGGER.error(str(match.group(1, 2, 3, 4)))
                 if match is None:
                     _LOGGER.error("Unexpected screen response: %s", line)
-                elif match.group(1) == b"!" and match.group(2) == b"1":
+                    continue
+
+                #_LOGGER.debug(str(match.group(1, 2, 3, 4)))
+                if match.group(1) == b'#' and match.group(4) == b"RECALL":
+                    _LOGGER.debug("screen moving")
+                    self._is_moving = True
+                elif match.group(1) == b'!' and match.group(2) == b"1":
                     if match.group(3) == b".POSITION":
-                        raw_position = float(match.group(4))
-                        position = self.raw_position_to_position(raw_position + 1.0)
-                        if position != self._data["position"]:
-                            (aspect, preset) = self.position_lookup(position)
-                            _LOGGER.debug("Mask position: motor=%.2f position=%d aspect=%.2f preset=%d", raw_position, position, aspect, preset)
-                            self._data["position"] = position
-                            self._data["motor_position"] = raw_position
-                            self._data["aspect_ratio"] = aspect
-                            self._data["screen_preset"] = preset
+                        motor_position = float(match.group(4))
+                        if motor_position != self._data["motor_position"]:
+                            ar = self.motor_position_to_aspect(motor_position)
+                            _LOGGER.debug("Mask position: motor=%.2f position=%d aspect=%s preset=%d",
+                                          motor_position, ar["cover_position"], ar["name"], ar["preset"])
+                            self._data["cover_position"] = ar["cover_position"]
+                            self._data["motor_position"] = motor_position
+                            self._data["screen_aspect_ratio"] = ar["value"]
+                            self._data["screen_aspect_ratio_string"] = ar["name"]
+                            self._data["screen_preset"] = ar["preset"]
                             if not self._init_event.is_set():
                                 self._init_event.set()
                             if self._callback is not None:
                                 self._callback(self._data)
                     elif match.group(3) == b".STATUS":
                         status = str(match.group(4), encoding='ascii')
-                        if status != self._data["status"]:
+                        if status == "STOP":
+                            _LOGGER.debug("screen stopped")
+                            self._is_moving = False
+                        if status != self._data["motor_status"]:
                             _LOGGER.debug("Mask status: %s", status)
-                            self._data["status"] = status
+                            self._data["motor_status"] = status
                             if self._callback is not None:
                                 self._callback(self._data)
 

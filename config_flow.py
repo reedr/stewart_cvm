@@ -12,7 +12,7 @@ from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
-from .const import CVM_MAX_RAW_POSITION, CVM_PRESETS_PROMPT, DOMAIN
+from .const import CVM_PRESETS_ASPECT, CVM_PRESETS_POSITION, DOMAIN
 from .device import CVMDevice
 
 _LOGGER = logging.getLogger(__name__)
@@ -22,8 +22,8 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
         vol.Required(CONF_HOST): str,
         vol.Required(CONF_USERNAME): str,
         vol.Required(CONF_PASSWORD): str,
-        vol.Required(CVM_PRESETS_PROMPT): str,
-        vol.Required(CVM_MAX_RAW_POSITION): str
+        vol.Required(CVM_PRESETS_ASPECT): str,
+        vol.Required(CVM_PRESETS_POSITION): str
     }
 )
 
@@ -31,7 +31,7 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
 async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
     """Validate the user input allows us to connect."""
 
-    dev = CVMDevice(hass, data[CONF_HOST], data[CONF_USERNAME], data[CONF_PASSWORD], data[CVM_PRESETS_PROMPT], data[CVM_MAX_RAW_POSITION])
+    dev = CVMDevice(hass, data[CONF_HOST], data[CONF_USERNAME], data[CONF_PASSWORD], data[CVM_PRESETS_ASPECT], data[CVM_PRESETS_POSITION])
     if await dev.test_connection():
         return {"title": "Stewart CVM"}
 

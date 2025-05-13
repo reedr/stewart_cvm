@@ -46,7 +46,7 @@ class CVMCover(CoverEntity, CVMEntity):
     def set_state(self) -> None:
         """Set how things are."""
         status = self.coordinator.device.data["motor_status"]
-        self._attr_current_cover_position = self.coordinator.device.data["position"]
+        self._attr_current_cover_position = self.coordinator.device.data["cover_position"]
         self._attr_is_closing = (status == "EXTENDING")
         self._attr_is_opening = (status == "RETRACTING")
         self._attr_state = CoverState.CLOSED if self.is_closed else CoverState.OPEN

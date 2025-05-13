@@ -6,8 +6,8 @@
           "host": "[%key:common::config_flow::data::host%]",
           "username": "[%key:common::config_flow::data::username%]",
           "password": "[%key:common::config_flow::data::password%]",
-          "cvmpresets": "Preset Aspect Ratios",
-          "cvmmaxpos": "Max Raw Position"
+          "cvmpresetar": "Preset Aspect Ratios",
+          "cvmpresetpos": "Preset Motor Positions"
         }
       }
     },

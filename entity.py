@@ -25,7 +25,7 @@ class CVMEntity(CoordinatorEntity[CVMCoordinator]):
         self._attr_unique_id = f"{self.coordinator.device.device_id}_{self.device_id}"
         _LOGGER.debug("%s", self.unique_id)
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, self.unique_id)},
+            identifiers={(DOMAIN, self.coordinator.device.device_id)},
             manufacturer=MANUFACTURER,
             model=MODEL,
             name=coordinator.device.device_id
