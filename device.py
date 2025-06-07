@@ -117,7 +117,7 @@ class CVMDevice:
 
     async def open_connection(self, test: bool=False) -> bool:
         """Establish a connection."""
-        if self.online:
+        if self.online and not self._writer.is_closing():
             return True
 
         try:
@@ -229,6 +229,8 @@ class CVMDevice:
                 line = await self._reader.readuntil(b"\n")
 
                 _LOGGER.debug("<- %s", str(line))
+                if line == b"\n":
+                    continue
 
                 match = self._match_re.match(line)
                 if match is None:
@@ -266,8 +268,14 @@ class CVMDevice:
                             if self._callback is not None:
                                 self._callback(self._data)
 
-            except (asyncio.IncompleteReadError) as err:
-                _LOGGER.error("Connection lost: %s", err)
+            except (asyncio.IncompleteReadError, ConnectionResetError) as err:
+                _LOGGER.error("Connection lost during read: %s", err)
+                self._writer.close()
+                self._online = False
+                break
+
+            except Exception as err:
+                _LOGGER.error("Unexpected read error: %s", err)
                 self._writer.close()
                 self._online = False
                 break
