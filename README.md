@@ -1,1 +1,1 @@
-# stewart_cvm
+# Home Assistant Integration for Stewart CVM Screen Masking Controller
