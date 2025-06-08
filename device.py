@@ -238,7 +238,7 @@ class CVMDevice:
                 )
                 await asyncio.sleep(5.0)
                 _LOGGER.debug("Calibrated %s preset=%d motor=%.2f", ar["name"], ar["preset"], self._data["motor_position"])
-                motor_positions[i] = self._data["motor_position"]
+                motor_positions[ar["preset"]-1] = self._data["motor_position"]
             motor_positions_conf = ",".join([str(p) for p in motor_positions])
             self.set_aspect_ratios(aspect_ratios_conf, motor_positions)
             _LOGGER.info("Calibration complete")
