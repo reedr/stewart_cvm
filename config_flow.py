@@ -7,7 +7,7 @@ from typing import Any
 
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult, OptionsFlow
+from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
@@ -44,7 +44,7 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
 
     raise CannotConnect
 
-class ConfigFlow(ConfigFlow, domain=DOMAIN):
+class ConfigFlowHandler(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for 2N Intercom."""
 
     VERSION = 1
@@ -110,9 +110,7 @@ class OptionsFlowHandler(OptionsFlow):
 
 @staticmethod
 @callback
-def async_get_options_flow(
-    config_entry: ConfigEntry,
-) -> OptionsFlow:
+def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
     """Create the options flow."""
     return OptionsFlowHandler()
 

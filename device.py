@@ -41,7 +41,6 @@ class CVMDevice:
         pat = r'[^!#]*([!#])1\.1\.(\d)\.MOTOR(\.[^=]+)?=([?.0-9A-Z]+)'
         self._match_re = re.compile(pat.encode('ascii'))
         self._aspect_ratios = []
-        motor_positions = [float(p) for p in presets_position.split(",")]
         self._data = {
                         "position": None,
                         "motor_status": "STOP",
@@ -50,7 +49,7 @@ class CVMDevice:
                         "screen_aspect_ratio_string": None,
                         "screen_preset": None
                       }
-        self.set_aspect_ratios(presets_aspect, motor_positions)
+        self.set_aspect_ratios(presets_aspect, presets_position)
         self._data["aspect_ratios"] = self._aspect_ratios
         self._init_event = asyncio.Event()
         self._calibrate_event = asyncio.Event()
@@ -60,7 +59,9 @@ class CVMDevice:
         self._is_moving = False
         self._listener = None
 
-    def set_aspect_ratios(self, presets_aspect: str, motor_positions: list[float]) -> None:
+    def set_aspect_ratios(self, presets_aspect: str, presets_positions: str) -> None:
+        """Set aspect ratios and motor positions."""
+        motor_positions = [float(p) for p in presets_positions.split(",")]
         self._aspect_ratios = sorted([{"name": ar,
                                        "value": float(ar),
                                        "preset": i+1,
