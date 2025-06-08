@@ -10,6 +10,7 @@ from homeassistant.core import HomeAssistant, callback
 
 from .const import (
     CVM_CONNECT_TIMEOUT,
+    CVM_CALIBRATE_TIMEOUT,
     CVM_LOGIN_TIMEOUT,
     CVM_MIN_COMMAND_INTERVAL,
     CVM_PORT,
@@ -32,16 +33,6 @@ class CVMDevice:
         self._host = host
         self._username = username
         self._password = password
-        motor_positions = [float(p) for p in presets_position.split(",")]
-        max_motor_position = max(motor_positions)
-        self._aspect_ratios = sorted([{"name": ar,
-                                       "value": float(ar),
-                                       "preset": i+1,
-                                       "motor_position": motor_positions[i],
-                                       "cover_position": int((max_motor_position - motor_positions[i])
-                                                              * MAX_COVER_POSITION / max_motor_position)}
-                                     for i, ar in enumerate(presets_aspect.split(","))],
-                                     key=itemgetter("value"))
         self._device_id = f"CVM:{host}"
         self._reader: asyncio.StreamReader
         self._writer: asyncio.StreamWriter
@@ -49,6 +40,9 @@ class CVMDevice:
         self._callback = None
         pat = r'[^!#]*([!#])1\.1\.(\d)\.MOTOR(\.[^=]+)?=([?.0-9A-Z]+)'
         self._match_re = re.compile(pat.encode('ascii'))
+        self._aspect_ratios = []
+        motor_positions = [float(p) for p in presets_position.split(",")]
+        self.set_aspect_ratios(presets_aspect, motor_positions)
         self._data = {
                         "position": None,
                         "motor_status": "STOP",
@@ -58,12 +52,26 @@ class CVMDevice:
                         "screen_aspect_ratio_string": None,
                         "screen_preset": None
                       }
+        self._data["aspect_ratios"] = self._aspect_ratios
         self._init_event = asyncio.Event()
+        self._calibrate_event = asyncio.Event()
         self._command_block_event = asyncio.Event()
         self._command_block_event.set()
         self._last_command_sent = None
         self._is_moving = False
         self._listener = None
+
+    def set_aspect_ratios(self, presets_aspect: str, motor_positions: list[float]) -> None:
+        self._aspect_ratios = sorted([{"name": ar,
+                                       "value": float(ar),
+                                       "preset": i+1,
+                                       "motor_position": motor_positions[i],
+                                       "cover_position": int((max(motor_positions) - motor_positions[i])
+                                                              * MAX_COVER_POSITION / max(motor_positions))}
+                                     for i, ar in enumerate(presets_aspect.split(","))],
+                                     key=itemgetter("value"))
+        for ar in self._aspect_ratios:
+            _LOGGER.info("aspect ratio: '%s' => %.2f cover=%d motor=%.2f preset=%d", ar["name"], ar["value"], ar["cover_position"], ar["motor_position"], ar["preset"])
 
     @property
     def device_id(self) -> str:
@@ -192,6 +200,7 @@ class CVMDevice:
     async def set_aspect_ratio(self, aspect: str) -> bool:
         """Set mask from aspect ratio."""
         ar = self.aspect_ratio_lookup(aspect)
+        _LOGGER.debug("set_aspect_ratio: %s => %.2f cover=%d motor=%.2f preset=%d", aspect, ar["value"], ar["cover_position"], ar["motor_position"], ar["preset"])
         return await self.send_recall(ar["preset"])
 
     async def set_position(self, position: int) -> bool:
@@ -210,6 +219,34 @@ class CVMDevice:
     async def stop_mask(self) -> bool:
         """Stop moving."""
         return await self.send_command("#1.1.0.MOTOR=STOP;")
+
+    async def async_recalibrate(self, aspect_ratios_conf: list[str]) -> str | None:
+        """Calibrate."""
+        _LOGGER.info("Calibrating")
+        aspect_ratios = sorted([{"name": ar, "value": float(ar), "preset": i+1}
+                                 for i, ar in enumerate(aspect_ratios_conf.split(","))],
+                                   key=itemgetter("value"))
+        motor_positions = [0] * len(aspect_ratios)
+        motor_positions_conf = None
+        try:
+            for i, ar in enumerate(aspect_ratios):
+                self._calibrate_event.clear()
+                await self.send_recall(ar["preset"])
+                await asyncio.wait_for(
+                    self._calibrate_event.wait(),
+                    timeout=CVM_CALIBRATE_TIMEOUT
+                )
+                await asyncio.sleep(5.0)
+                _LOGGER.debug("Calibrated %s preset=%d motor=%.2f", ar["name"], ar["preset"], self._data["motor_position"])
+                motor_positions[i] = self._data["motor_position"]
+            motor_positions_conf = ",".join([str(p) for p in motor_positions])
+            self.set_aspect_ratios(aspect_ratios_conf, motor_positions)
+            _LOGGER.info("Calibration complete")
+        except TimeoutError:
+            _LOGGER.error("Calibration timeout")
+        except Exception as err:
+            _LOGGER.error("Calibration error: %s", err)
+        return motor_positions_conf
 
     async def async_init(self, data_callback: callback) -> dict:
         """Query position and wait for response."""
@@ -241,10 +278,15 @@ class CVMDevice:
                 if match.group(1) == b'#' and match.group(4) == b"RECALL":
                     _LOGGER.debug("screen moving")
                     self._is_moving = True
-                elif match.group(1) == b'!' and match.group(2) == b"1":
-                    if match.group(3) == b".POSITION":
+                elif match.group(1) == b'!':
+                    if match.group(3) == b".POSITION" and match.group(2) == b"1":
                         motor_position = float(match.group(4))
-                        if motor_position != self._data["motor_position"]:
+                        if motor_position == self._data["motor_position"]:
+                            self._is_moving = False
+                            if not self._calibrate_event.is_set():
+                                _LOGGER.debug("Position not changed, assuming calibration complete")
+                                self._calibrate_event.set()
+                        else:
                             ar = self.motor_position_to_aspect(motor_position)
                             _LOGGER.debug("Mask position: motor=%.2f position=%d aspect=%s preset=%d",
                                           motor_position, ar["cover_position"], ar["name"], ar["preset"])
@@ -260,8 +302,9 @@ class CVMDevice:
                     elif match.group(3) == b".STATUS":
                         status = str(match.group(4), encoding='ascii')
                         if status == "STOP":
-                            _LOGGER.debug("screen stopped")
+                            _LOGGER.debug("Motor %s stopped", str(match.group(2), encoding='ascii'))
                             self._is_moving = False
+                            self._calibrate_event.set()
                         if status != self._data["motor_status"]:
                             _LOGGER.debug("Mask status: %s", status)
                             self._data["motor_status"] = status

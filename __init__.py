@@ -17,13 +17,15 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup_entry(hass: HomeAssistant, entry: CVMConfigEntry) -> bool:
     """Set up CVM device from a config entry."""
 
+    aspect_ratios = entry.options.get(CVM_PRESETS_ASPECT, entry.data[CVM_PRESETS_ASPECT])
+    motor_positions = entry.options.get(CVM_PRESETS_POSITION, entry.data[CVM_PRESETS_POSITION])
     dev = CVMDevice(
         hass,
         entry.data[CONF_HOST],
         entry.data[CONF_USERNAME],
         entry.data[CONF_PASSWORD],
-        entry.data[CVM_PRESETS_ASPECT],
-        entry.data[CVM_PRESETS_POSITION]
+        aspect_ratios,
+        motor_positions
     )
     coord = CVMCoordinator(hass, entry, dev)
     entry.runtime_data = coord

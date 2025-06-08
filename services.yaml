@@ -1,0 +1,9 @@
+# services.yaml - Define services for Home Assistant UI
+
+calibrate:
+  name: Calibrate
+  description: Calibrate the screen motor positions
+  target:
+    entity:
+      domain: CVM
+  fields:
