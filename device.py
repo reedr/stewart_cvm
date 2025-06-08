@@ -42,16 +42,15 @@ class CVMDevice:
         self._match_re = re.compile(pat.encode('ascii'))
         self._aspect_ratios = []
         motor_positions = [float(p) for p in presets_position.split(",")]
-        self.set_aspect_ratios(presets_aspect, motor_positions)
         self._data = {
                         "position": None,
                         "motor_status": "STOP",
                         "motor_position": None,
-                        "aspect_ratios": self._aspect_ratios,
                         "screen_aspect_ratio": None,
                         "screen_aspect_ratio_string": None,
                         "screen_preset": None
                       }
+        self.set_aspect_ratios(presets_aspect, motor_positions)
         self._data["aspect_ratios"] = self._aspect_ratios
         self._init_event = asyncio.Event()
         self._calibrate_event = asyncio.Event()
@@ -72,6 +71,7 @@ class CVMDevice:
                                      key=itemgetter("value"))
         for ar in self._aspect_ratios:
             _LOGGER.info("aspect ratio: '%s' => %.2f cover=%d motor=%.2f preset=%d", ar["name"], ar["value"], ar["cover_position"], ar["motor_position"], ar["preset"])
+        self._data["aspect_ratios"] = self._aspect_ratios
 
     @property
     def device_id(self) -> str:
@@ -222,7 +222,7 @@ class CVMDevice:
 
     async def async_recalibrate(self, aspect_ratios_conf: list[str]) -> str | None:
         """Calibrate."""
-        _LOGGER.info("Calibrating")
+        _LOGGER.info("Calibrating presets")
         aspect_ratios = sorted([{"name": ar, "value": float(ar), "preset": i+1}
                                  for i, ar in enumerate(aspect_ratios_conf.split(","))],
                                    key=itemgetter("value"))
@@ -237,10 +237,9 @@ class CVMDevice:
                     timeout=CVM_CALIBRATE_TIMEOUT
                 )
                 await asyncio.sleep(5.0)
-                _LOGGER.debug("Calibrated %s preset=%d motor=%.2f", ar["name"], ar["preset"], self._data["motor_position"])
+                _LOGGER.info("Calibrated %s preset=%d motor=%.2f", ar["name"], ar["preset"], self._data["motor_position"])
                 motor_positions[ar["preset"]-1] = self._data["motor_position"]
             motor_positions_conf = ",".join([str(p) for p in motor_positions])
-            self.set_aspect_ratios(aspect_ratios_conf, motor_positions)
             _LOGGER.info("Calibration complete")
         except TimeoutError:
             _LOGGER.error("Calibration timeout")

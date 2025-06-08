@@ -31,7 +31,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: CVMConfigEntry) -> bool:
     entry.runtime_data = coord
     await coord.async_config_entry_first_refresh()
     await hass.config_entries.async_forward_entry_setups(entry, _PLATFORMS)
+    entry.async_on_unload(entry.add_update_listener(async_update_options))
 
+    return True
+
+async def async_update_options(hass: HomeAssistant, entry: CVMConfigEntry) -> bool:
+    """Update options."""
+    dev = entry.runtime_data.device
+    dev.set_aspect_ratios(entry.options.get(CVM_PRESETS_ASPECT, entry.data[CVM_PRESETS_ASPECT]),
+                          entry.options.get(CVM_PRESETS_POSITION, entry.data[CVM_PRESETS_POSITION]))
     return True
 
 async def async_unload_entry(hass: HomeAssistant, entry: CVMConfigEntry) -> bool:

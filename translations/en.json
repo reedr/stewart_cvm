@@ -1,0 +1,33 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "data": {
+          "host": "Host",
+          "username": "Username",
+          "password": "Password",
+          "cvmpresetar": "Preset Aspect Ratios",
+          "cvmpresetpos": "Preset Motor Positions"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Cannot connect",
+      "invalid_auth": "Invalid authentication",
+      "unknown": "Unknown error"
+    },
+    "abort": {
+      "already_configured": "Already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "data": {
+          "cvmpresetar": "Preset Aspect Ratios",
+          "cvmpresetpos": "Preset Motor Positions"
+        }
+      }
+    }
+  }
+}
